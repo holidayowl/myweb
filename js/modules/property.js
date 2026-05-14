@@ -89,8 +89,6 @@ export function setupPropertyEvents() {
   document.getElementById('prop-import-btn').addEventListener('click', () => {
     document.getElementById('prop-import-file').click();
   });
-    document.getElementById('prop-import-file').click();
-  });
 
   document.getElementById('prop-import-file').addEventListener('change', async (e) => {
     const file = e.target.files[0];
