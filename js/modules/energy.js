@@ -1,7 +1,17 @@
 import { get, set } from '../storage.js';
 import { uuid, formatNumber, formatDate, showToast, showModal, closeModal, confirm, paginate, getMonthLabel } from '../utils.js';
 import { createLineChart, createBarChart, destroyChart } from '../charts.js';
-import { importFromExcel, validateImport } from '../excel.js';
+import { importFromExcel, validateImport, resolveImportColumns, downloadImportTemplate } from '../excel.js';
+
+const COLUMN_ALIASES = {
+  energyType: ['能耗类型', '类型', '能源类型', '种类'],
+  period: ['统计周期', '周期', '月份', '统计月份', '时间'],
+  value: ['用量', '数值', '使用量', '消耗量', '用量数值'],
+  unit: ['单位', '计量单位'],
+  notes: ['备注', '说明'],
+};
+const REQUIRED_KEYS = ['energyType', 'period', 'value'];
+const TEMPLATE_HEADERS = ['能耗类型', '统计周期', '用量', '单位', '备注'];
 
 const PAGE_KEY = 'energy_page';
 const ENERGY_TYPES = [
@@ -37,7 +47,9 @@ export function renderEnergyList() {
     <div class="toolbar">
       <button id="energy-add-btn" class="btn btn-primary">+ 新增记录</button>
       <button id="energy-import-btn" class="btn btn-outline">📥 批量导入</button>
+      <button id="energy-template-btn" class="btn btn-outline btn-sm">📋 模板</button>
     </div>
+    <input type="file" id="energy-import-file" accept=".xlsx,.xls" style="display:none">
     <div class="card" style="overflow-x:auto">
       <table class="data-table">
         <thead><tr>
@@ -51,10 +63,6 @@ export function renderEnergyList() {
       <div class="chart-box"><h4>月度用量趋势</h4><div style="height:280px;position:relative"><canvas id="chart-energy-trend"></canvas></div></div>
       <div class="chart-box"><h4>各类型累计用量</h4><div style="height:280px;position:relative"><canvas id="chart-energy-type"></canvas></div></div>
     </div>
-    <div id="energy-import-area" class="hidden" style="margin-top:16px">
-      <input type="file" id="energy-import-file" accept=".xlsx,.xls">
-      <button id="energy-import-run" class="btn btn-sm btn-primary">执行导入</button>
-    </div>
   `;
 }
 
@@ -63,51 +71,61 @@ export function setupEnergyEvents() {
 
   document.getElementById('energy-add-btn').addEventListener('click', () => showEnergyForm(null));
   document.getElementById('energy-import-btn').addEventListener('click', () => {
-    document.getElementById('energy-import-area').classList.toggle('hidden');
+    document.getElementById('energy-import-file').click();
   });
 
-  document.getElementById('energy-import-run').addEventListener('click', async () => {
-    const fileInput = document.getElementById('energy-import-file');
-    const file = fileInput.files[0];
-    if (!file) { showToast('请先选择 Excel 文件。', 'error'); return; }
+  document.getElementById('energy-import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
     try {
       const result = await importFromExcel(file);
       const sheetData = result[Object.keys(result)[0]] || [];
-      const fieldMap = {
-        energyType: '能耗类型', period: '统计周期', value: '用量', unit: '单位', notes: '备注'
-      };
-      const { valid, errors } = validateImport(sheetData, fieldMap, ['能耗类型', '统计周期', '用量']);
+      if (sheetData.length === 0) { showToast('文件中没有数据。', 'error'); e.target.value = ''; return; }
+
+      const actualHeaders = Object.keys(sheetData[0]);
+      const { resolved, unmatched } = resolveImportColumns(actualHeaders, COLUMN_ALIASES);
+      const unmatchedRequired = unmatched.filter(k => REQUIRED_KEYS.includes(k));
+
+      if (unmatchedRequired.length > 0) {
+        const names = unmatchedRequired.map(k => COLUMN_ALIASES[k][0]).join('、');
+        showToast(`未识别必填列：${names}。当前文件包含：${actualHeaders.join(', ')}。请下载模板。`, 'error');
+        e.target.value = ''; return;
+      }
+
+      const { valid, errors } = validateImport(sheetData, resolved, REQUIRED_KEYS);
       if (errors.length > 0) {
-        showToast(`导入完成：成功 ${valid.length} 条，失败 ${errors.length} 条`, 'warning');
+        const rows = errors.slice(0, 5).map(r => `第${r.row}行`).join(',');
+        showToast(`导入：${valid.length}条成功，${errors.length}条失败（${rows}）`, 'warning');
       }
       if (valid.length > 0) {
         const typeMap = { '水': 'water', '电': 'electric', '气': 'gas' };
         const mapped = valid.map(row => {
-          const et = row['能耗类型'];
-          const ut = row['单位'] || '';
+          const et = String(row[resolved.energyType] || '').trim();
+          const ut = String(row[resolved.unit] || '').trim();
           return {
             id: uuid(),
             energyType: typeMap[et] || 'electric',
-            period: row['统计周期'] || '',
-            value: parseFloat(row['用量']) || 0,
+            period: String(row[resolved.period] || '').trim(),
+            value: parseFloat(row[resolved.value]) || 0,
             unit: ut || undefined,
             isAbnormal: false,
-            notes: row['备注'] || '',
+            notes: row[resolved.notes] || '',
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
           };
         });
-        const list = getData();
-        list.push(...mapped);
-        saveData(list);
+        getData().push(...mapped);
+        saveData(getData());
         showToast(`成功导入 ${valid.length} 条能耗记录`);
         renderEnergyContent();
-        document.getElementById('energy-import-area').classList.add('hidden');
-        fileInput.value = '';
       }
-    } catch (err) {
-      showToast(err.message || '导入失败', 'error');
-    }
+    } catch (err) { showToast(err.message || '导入失败', 'error'); }
+    e.target.value = '';
+  });
+
+  document.getElementById('energy-template-btn').addEventListener('click', () => {
+    downloadImportTemplate(TEMPLATE_HEADERS, '能耗数据', '能耗导入模板.xlsx');
+    showToast('模板已下载。');
   });
 
   document.getElementById('filter-energy-type').addEventListener('change', () => renderEnergyContent());

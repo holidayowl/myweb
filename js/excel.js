@@ -34,7 +34,29 @@ export function importFromExcel(file) {
   });
 }
 
-export function validateImport(data, fieldMap, requiredFields) {
+function normalizeHeader(str) {
+  return String(str || '').trim().replace(/\s+/g, '').toLowerCase();
+}
+
+export function resolveImportColumns(actualHeaders, columnAliases) {
+  const normalized = actualHeaders.map(h => ({ original: h, norm: normalizeHeader(h) }));
+  const resolved = {};
+  const unmatched = [];
+
+  for (const [key, aliases] of Object.entries(columnAliases)) {
+    const normAliases = aliases.map(a => normalizeHeader(a));
+    const match = normalized.find(nh => normAliases.includes(nh.norm));
+    if (match) {
+      resolved[key] = match.original;
+    } else {
+      unmatched.push(key);
+    }
+  }
+
+  return { resolved, unmatched, fileHeaders: actualHeaders };
+}
+
+export function validateImport(data, resolvedColumns, requiredKeys) {
   const errors = [];
   const valid = [];
 
@@ -46,9 +68,10 @@ export function validateImport(data, fieldMap, requiredFields) {
     const row = data[i];
     const rowErrors = [];
 
-    for (const field of requiredFields) {
-      const excelCol = fieldMap[field] || field;
-      if (!row[excelCol] && row[excelCol] !== 0) {
+    for (const field of requiredKeys) {
+      const col = resolvedColumns[field];
+      const val = col ? row[col] : undefined;
+      if (!val && val !== 0) {
         rowErrors.push(`缺少必填字段: ${field}`);
       }
     }
@@ -71,6 +94,15 @@ export function mapImportData(data, fieldMap) {
     }
     return mapped;
   });
+}
+
+export function downloadImportTemplate(headers, sheetName, fileName) {
+  const sheets = [{
+    name: sheetName || '导入模板',
+    headers,
+    data: [],
+  }];
+  exportToExcel(sheets, fileName || '导入模板.xlsx');
 }
 
 export function downloadFile(content, fileName, mimeType) {

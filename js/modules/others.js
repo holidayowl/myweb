@@ -1,6 +1,15 @@
 import { get, set } from '../storage.js';
 import { uuid, formatDate, today, showToast, showModal, closeModal, confirm, paginate } from '../utils.js';
-import { exportToExcel } from '../excel.js';
+import { importFromExcel, validateImport, resolveImportColumns, downloadImportTemplate, exportToExcel } from '../excel.js';
+
+const COLUMN_ALIASES = {
+  workName: ['工作名称', '名称', '事项', '工作事项', '工作内容', '标题'],
+  recordDate: ['记录时间', '时间', '日期', '记录日期'],
+  category: ['事项分类', '分类', '类别', '类型'],
+  notes: ['备注', '说明', '备注说明', '内容'],
+};
+const REQUIRED_KEYS = ['workName', 'recordDate'];
+const TEMPLATE_HEADERS = ['工作名称', '记录时间', '事项分类', '备注说明'];
 
 const PAGE_KEY = 'others_page';
 
@@ -33,9 +42,12 @@ export function renderOthersList() {
     </div>
     <div class="toolbar">
       <button id="others-add-btn" class="btn btn-primary">+ 新增记录</button>
+      <button id="others-import-btn" class="btn btn-outline">📥 导入Excel</button>
+      <button id="others-template-btn" class="btn btn-outline btn-sm">📋 模板</button>
       <button id="others-schema-btn" class="btn btn-outline">📐 管理字段</button>
       <button id="others-export-btn" class="btn btn-outline">📤 导出Excel</button>
     </div>
+    <input type="file" id="others-import-file" accept=".xlsx,.xls" style="display:none">
     <div class="card" style="overflow-x:auto">
       <table class="data-table">
         <thead><tr>
@@ -51,6 +63,58 @@ export function renderOthersList() {
 export function setupOthersEvents() {
   renderOthersContent();
   document.getElementById('others-add-btn').addEventListener('click', () => showOthersForm(null));
+
+  document.getElementById('others-import-btn').addEventListener('click', () => {
+    document.getElementById('others-import-file').click();
+  });
+
+  document.getElementById('others-import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const result = await importFromExcel(file);
+      const sheetData = result[Object.keys(result)[0]] || [];
+      if (sheetData.length === 0) { showToast('文件中没有数据。', 'error'); e.target.value = ''; return; }
+
+      const actualHeaders = Object.keys(sheetData[0]);
+      const { resolved, unmatched } = resolveImportColumns(actualHeaders, COLUMN_ALIASES);
+      const unmatchedRequired = unmatched.filter(k => REQUIRED_KEYS.includes(k));
+
+      if (unmatchedRequired.length > 0) {
+        const names = unmatchedRequired.map(k => COLUMN_ALIASES[k][0]).join('、');
+        showToast(`未识别必填列：${names}。当前文件包含：${actualHeaders.join(', ')}。请下载模板。`, 'error');
+        e.target.value = ''; return;
+      }
+
+      const { valid, errors } = validateImport(sheetData, resolved, REQUIRED_KEYS);
+      if (errors.length > 0) {
+        const rows = errors.slice(0, 5).map(r => `第${r.row}行`).join(',');
+        showToast(`导入：${valid.length}条成功，${errors.length}条失败（${rows}）`, 'warning');
+      }
+      if (valid.length > 0) {
+        const mapped = valid.map(row => ({
+          id: uuid(),
+          workName: row[resolved.workName] || '',
+          recordDate: row[resolved.recordDate] || '',
+          category: row[resolved.category] || '',
+          notes: row[resolved.notes] || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }));
+        getData().push(...mapped);
+        saveData(getData());
+        showToast(`成功导入 ${valid.length} 条工作记录`);
+        renderOthersContent();
+      }
+    } catch (err) { showToast(err.message || '导入失败', 'error'); }
+    e.target.value = '';
+  });
+
+  document.getElementById('others-template-btn').addEventListener('click', () => {
+    downloadImportTemplate(TEMPLATE_HEADERS, '其他工作', '其他工作导入模板.xlsx');
+    showToast('模板已下载。');
+  });
+
   document.getElementById('others-export-btn').addEventListener('click', () => {
     const data = getData();
     const sheets = [{ name: '其他工作', headers: ['工作名称', '记录时间', '事项分类', '备注说明'],

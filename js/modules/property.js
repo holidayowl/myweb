@@ -1,7 +1,18 @@
 import { get, set } from '../storage.js';
 import { uuid, formatDate, formatCurrency, today, showToast, showModal, closeModal, confirm, paginate } from '../utils.js';
 import { createPieChart, createBarChart, destroyChart } from '../charts.js';
-import { exportToExcel } from '../excel.js';
+import { importFromExcel, validateImport, resolveImportColumns, downloadImportTemplate, exportToExcel } from '../excel.js';
+
+const COLUMN_ALIASES = {
+  expenseType: ['支出项目', '项目', '费用类型', '支出类别', '类型', '类别'],
+  amount: ['金额', '支出金额', '费用金额', '数额'],
+  expenseDate: ['日期', '支出日期', '发生日期', '时间'],
+  paymentMethod: ['支付方式', '方式', '付款方式'],
+  purpose: ['用途', '用途说明', '说明', '事由'],
+  notes: ['备注', '备注说明'],
+};
+const REQUIRED_KEYS = ['expenseType', 'amount', 'expenseDate'];
+const TEMPLATE_HEADERS = ['支出项目', '金额', '日期', '支付方式', '用途说明', '备注'];
 
 const PAGE_KEY = 'property_page';
 const EXPENSE_TYPES = ['设备维保费', '保洁费', '绿化费', '安保费', '维修耗材费', '水电维修', '其他'];
@@ -37,8 +48,11 @@ export function renderPropertyList() {
     </div>
     <div class="toolbar">
       <button id="prop-add-btn" class="btn btn-primary">+ 新增支出</button>
+      <button id="prop-import-btn" class="btn btn-outline">📥 导入Excel</button>
+      <button id="prop-template-btn" class="btn btn-outline btn-sm">📋 模板</button>
       <button id="prop-export-btn" class="btn btn-outline">📤 导出Excel</button>
     </div>
+    <input type="file" id="prop-import-file" accept=".xlsx,.xls" style="display:none">
     <div class="card" style="overflow-x:auto">
       <table class="data-table">
         <thead><tr><th>支出项目</th><th>金额</th><th>日期</th><th>支付方式</th><th>大额</th><th>用途</th><th>操作</th></tr></thead>
@@ -56,6 +70,63 @@ export function renderPropertyList() {
 export function setupPropertyEvents() {
   renderPropertyContent();
   document.getElementById('prop-add-btn').addEventListener('click', () => showPropertyForm(null));
+
+  document.getElementById('prop-import-btn').addEventListener('click', () => {
+    document.getElementById('prop-import-file').click();
+  });
+
+  document.getElementById('prop-import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const result = await importFromExcel(file);
+      const sheetData = result[Object.keys(result)[0]] || [];
+      if (sheetData.length === 0) { showToast('文件中没有数据。', 'error'); e.target.value = ''; return; }
+
+      const actualHeaders = Object.keys(sheetData[0]);
+      const { resolved, unmatched } = resolveImportColumns(actualHeaders, COLUMN_ALIASES);
+      const unmatchedRequired = unmatched.filter(k => REQUIRED_KEYS.includes(k));
+
+      if (unmatchedRequired.length > 0) {
+        const names = unmatchedRequired.map(k => COLUMN_ALIASES[k][0]).join('、');
+        showToast(`未识别必填列：${names}。当前文件包含：${actualHeaders.join(', ')}。请下载模板。`, 'error');
+        e.target.value = ''; return;
+      }
+
+      const { valid, errors } = validateImport(sheetData, resolved, REQUIRED_KEYS);
+      if (errors.length > 0) {
+        const rows = errors.slice(0, 5).map(r => `第${r.row}行`).join(',');
+        showToast(`导入：${valid.length}条成功，${errors.length}条失败（${rows}）`, 'warning');
+      }
+      if (valid.length > 0) {
+        const settings = get('settings') || {};
+        const threshold = settings.largeExpenseThreshold || 5000;
+        const mapped = valid.map(row => ({
+          id: uuid(),
+          expenseType: row[resolved.expenseType] || '',
+          amount: parseFloat(row[resolved.amount]) || 0,
+          expenseDate: row[resolved.expenseDate] || '',
+          paymentMethod: row[resolved.paymentMethod] || '',
+          purpose: row[resolved.purpose] || '',
+          isLargeExpense: (parseFloat(row[resolved.amount]) || 0) >= threshold,
+          notes: row[resolved.notes] || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }));
+        getData().push(...mapped);
+        saveData(getData());
+        showToast(`成功导入 ${valid.length} 条支出记录`);
+        renderPropertyContent();
+      }
+    } catch (err) { showToast(err.message || '导入失败', 'error'); }
+    e.target.value = '';
+  });
+
+  document.getElementById('prop-template-btn').addEventListener('click', () => {
+    downloadImportTemplate(TEMPLATE_HEADERS, '物业运维支出', '运维支出导入模板.xlsx');
+    showToast('模板已下载。');
+  });
+
   document.getElementById('prop-export-btn').addEventListener('click', () => {
     const data = getData();
     const sheets = [{ name: '物业运维支出', headers: ['支出项目', '金额', '日期', '支付方式', '用途', '备注'],

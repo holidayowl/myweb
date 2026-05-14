@@ -1,7 +1,21 @@
 import { get, set } from '../storage.js';
 import { uuid, formatDate, formatCurrency, today, daysFromNow, showToast, showModal, closeModal, confirm, paginate } from '../utils.js';
 import { createPieChart, createBarChart, destroyChart } from '../charts.js';
-import { importFromExcel, validateImport, exportToExcel } from '../excel.js';
+import { importFromExcel, validateImport, resolveImportColumns, downloadImportTemplate, exportToExcel } from '../excel.js';
+
+const COLUMN_ALIASES = {
+  contractName: ['合同名称', '名称', '合同名', '项目名称', '项目名'],
+  contractNo: ['合同编号', '编号', '合同号', '序号'],
+  partner: ['合作方', '合作单位', '对方单位', '供应商', '客户'],
+  signDate: ['签订日期', '签署日期', '签约日期', '日期'],
+  startDate: ['有效期起', '开始日期', '生效日期', '起始日期'],
+  endDate: ['有效期止', '结束日期', '到期日期', '截止日期', '终止日期'],
+  amount: ['金额', '合同金额', '总金额', '价款', '费用'],
+  content: ['合同内容', '核心内容', '主要内容', '内容'],
+  notes: ['备注', '说明', '备注说明'],
+};
+const REQUIRED_KEYS = ['contractName', 'partner'];
+const TEMPLATE_HEADERS = ['合同名称', '合同编号', '合作方', '签订日期', '有效期起', '有效期止', '金额', '合同内容', '备注'];
 
 const PAGE_KEY = 'contracts_page';
 
@@ -83,8 +97,10 @@ export function renderContractList() {
     <div class="toolbar">
       <button id="contract-add-btn" class="btn btn-primary">+ 新增合同</button>
       <button id="contract-import-btn" class="btn btn-outline">📥 导入Excel</button>
+      <button id="contract-template-btn" class="btn btn-outline btn-sm">📋 模板</button>
       <button id="contract-export-btn" class="btn btn-outline">📤 导出Excel</button>
     </div>
+    <input type="file" id="contracts-import-file" accept=".xlsx,.xls" style="display:none">
 
     <div class="card" style="overflow-x:auto">
       <table class="data-table" id="contracts-table">
@@ -116,10 +132,6 @@ export function renderContractList() {
       </div>
     </div>
 
-    <div id="contracts-import-area" class="hidden" style="margin-top:16px">
-      <input type="file" id="contracts-import-file" accept=".xlsx,.xls">
-      <button id="contracts-import-run" class="btn btn-sm btn-primary">执行导入</button>
-    </div>
   `;
 }
 
@@ -129,58 +141,63 @@ export function setupContractEvents() {
 
   document.getElementById('contract-add-btn').addEventListener('click', () => showContractForm(null));
   document.getElementById('contract-import-btn').addEventListener('click', () => {
-    document.getElementById('contracts-import-area').classList.toggle('hidden');
+    document.getElementById('contracts-import-file').click();
   });
 
-  document.getElementById('contracts-import-run').addEventListener('click', async () => {
-    const fileInput = document.getElementById('contracts-import-file');
-    const file = fileInput.files[0];
-    if (!file) { showToast('请先选择 Excel 文件。', 'error'); return; }
+  document.getElementById('contracts-import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
     try {
       const result = await importFromExcel(file);
       const sheetData = result[Object.keys(result)[0]] || [];
-      const fieldMap = {
-        contractName: '合同名称', contractNo: '合同编号', partner: '合作方',
-        signDate: '签订日期', startDate: '有效期起', endDate: '有效期止',
-        amount: '金额', content: '合同内容', notes: '备注'
-      };
-      const { valid, errors } = validateImport(sheetData, fieldMap, ['合同名称', '合作方']);
+      if (sheetData.length === 0) { showToast('文件中没有数据。', 'error'); e.target.value = ''; return; }
+
+      const actualHeaders = Object.keys(sheetData[0]);
+      const { resolved, unmatched } = resolveImportColumns(actualHeaders, COLUMN_ALIASES);
+      const unmatchedRequired = unmatched.filter(k => REQUIRED_KEYS.includes(k));
+
+      if (unmatchedRequired.length > 0) {
+        const names = unmatchedRequired.map(k => COLUMN_ALIASES[k][0]).join('、');
+        showToast(`未识别必填列：${names}。当前文件包含：${actualHeaders.join(', ')}。请下载模板。`, 'error');
+        e.target.value = ''; return;
+      }
+
+      const { valid, errors } = validateImport(sheetData, resolved, REQUIRED_KEYS);
       if (errors.length > 0) {
-        showToast(`导入完成：成功 ${valid.length} 条，失败 ${errors.length} 条（第 ${errors.map(e => e.row).join(',')} 行）。`, 'warning');
+        const rows = errors.slice(0, 5).map(r => `第${r.row}行`).join(',');
+        const suffix = errors.length > 5 ? `等${errors.length}行` : '';
+        showToast(`导入：${valid.length}条成功，${errors.length}条失败（${rows}${suffix}）`, 'warning');
       }
       if (valid.length > 0) {
         const mapped = valid.map(row => {
           const m = {};
-          for (const [k, v] of Object.entries(fieldMap)) {
-            m[k] = row[v] !== undefined ? row[v] : '';
+          for (const k of Object.keys(COLUMN_ALIASES)) {
+            m[k] = row[resolved[k]] !== undefined ? row[resolved[k]] : '';
           }
           return {
-            ...m,
-            id: uuid(),
-            amount: parseFloat(m.amount) || 0,
-            status: 'active',
+            ...m, id: uuid(),
+            amount: parseFloat(m.amount) || 0, status: 'active',
             attachment: '', attachmentName: '',
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+            createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
           };
         });
-        const list = getContracts();
-        list.push(...mapped);
-        saveContracts(list);
+        getContracts().push(...mapped);
+        saveContracts(getContracts());
         showToast(`成功导入 ${valid.length} 条合同记录`);
-        renderTable();
-        renderCharts();
-        document.getElementById('contracts-import-area').classList.add('hidden');
-        fileInput.value = '';
+        renderTable(); renderCharts();
       }
-    } catch (err) {
-      showToast(err.message || '导入失败', 'error');
-    }
+    } catch (err) { showToast(err.message || '导入失败', 'error'); }
+    e.target.value = '';
+  });
+
+  document.getElementById('contract-template-btn').addEventListener('click', () => {
+    downloadImportTemplate(TEMPLATE_HEADERS, '合同目录', '合同导入模板.xlsx');
+    showToast('模板已下载，按模板格式填写后导入。');
   });
 
   document.getElementById('contract-export-btn').addEventListener('click', () => {
     const contracts = getContracts();
-    const sheets = [{
+    exportToExcel([{
       name: '合同目录',
       headers: ['合同名称', '合同编号', '合作方', '签订日期', '有效期起', '有效期止', '金额', '状态', '合同内容', '备注'],
       data: contracts.map(c => ({
@@ -189,8 +206,7 @@ export function setupContractEvents() {
         '金额': c.amount, '状态': computeStatus(c) === 'active' ? '有效' : computeStatus(c) === 'expired' ? '已过期' : '已终止',
         '合同内容': c.content, '备注': c.notes,
       })),
-    }];
-    exportToExcel(sheets, `合同目录_${today()}.xlsx`);
+    }], `合同目录_${today()}.xlsx`);
     showToast('导出成功');
   });
 

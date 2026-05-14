@@ -1,7 +1,22 @@
 import { get, set } from '../storage.js';
 import { uuid, formatDate, formatCurrency, showToast, showModal, closeModal, confirm, paginate } from '../utils.js';
 import { createPieChart, createBarChart, destroyChart } from '../charts.js';
-import { importFromExcel, validateImport } from '../excel.js';
+import { importFromExcel, validateImport, resolveImportColumns, downloadImportTemplate } from '../excel.js';
+
+const COLUMN_ALIASES = {
+  equipmentName: ['设备名称', '名称', '设备名', '设备'],
+  equipmentNo: ['设备编号', '编号', '设备号'],
+  repairDate: ['维修日期', '日期', '维修时间', '修理日期'],
+  faultDescription: ['故障描述', '故障说明', '故障现象', '问题描述', '描述'],
+  repairMethod: ['维修方式', '方式', '处理方法', '维修方法'],
+  repairCost: ['费用', '维修费用', '金额', '花费', '成本'],
+  repairPerson: ['维修人员', '维修人', '负责人', '处理人'],
+  repairResult: ['维修结果', '结果', '处理结果', '维修结论'],
+  recheckDate: ['复检日期', '复查日期', '检验日期'],
+  notes: ['备注', '说明'],
+};
+const REQUIRED_KEYS = ['equipmentName', 'repairDate'];
+const TEMPLATE_HEADERS = ['设备名称', '设备编号', '维修日期', '故障描述', '维修方式', '费用', '维修人员', '维修结果', '复检日期', '备注'];
 
 const PAGE_KEY = 'equipment_page';
 const REPAIR_METHODS = ['自修', '外包'];
@@ -36,7 +51,9 @@ export function renderEquipmentList() {
     <div class="toolbar">
       <button id="equip-add-btn" class="btn btn-primary">+ 新增记录</button>
       <button id="equip-import-btn" class="btn btn-outline">📥 导入Excel</button>
+      <button id="equip-template-btn" class="btn btn-outline btn-sm">📋 模板</button>
     </div>
+    <input type="file" id="equip-import-file" accept=".xlsx,.xls" style="display:none">
     <div class="card" style="overflow-x:auto">
       <table class="data-table">
         <thead><tr><th>设备名称</th><th>编号</th><th>维修日期</th><th>故障描述</th><th>维修方式</th><th>费用</th><th>结果</th><th>操作</th></tr></thead>
@@ -48,10 +65,6 @@ export function renderEquipmentList() {
       <div class="chart-box"><h4>维修方式占比</h4><div style="height:280px;position:relative"><canvas id="chart-equip-method"></canvas></div></div>
       <div class="chart-box"><h4>各设备维修次数（前8）</h4><div style="height:280px;position:relative"><canvas id="chart-equip-freq"></canvas></div></div>
     </div>
-    <div id="equip-import-area" class="hidden" style="margin-top:16px">
-      <input type="file" id="equip-import-file" accept=".xlsx,.xls">
-      <button id="equip-import-run" class="btn btn-sm btn-primary">执行导入</button>
-    </div>
   `;
 }
 
@@ -59,53 +72,61 @@ export function setupEquipmentEvents() {
   renderEquipContent();
   document.getElementById('equip-add-btn').addEventListener('click', () => showEquipForm(null));
   document.getElementById('equip-import-btn').addEventListener('click', () => {
-    document.getElementById('equip-import-area').classList.toggle('hidden');
+    document.getElementById('equip-import-file').click();
   });
 
-  document.getElementById('equip-import-run').addEventListener('click', async () => {
-    const fileInput = document.getElementById('equip-import-file');
-    const file = fileInput.files[0];
-    if (!file) { showToast('请先选择 Excel 文件。', 'error'); return; }
+  document.getElementById('equip-import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
     try {
       const result = await importFromExcel(file);
       const sheetData = result[Object.keys(result)[0]] || [];
-      const fieldMap = {
-        equipmentName: '设备名称', equipmentNo: '设备编号', repairDate: '维修日期',
-        faultDescription: '故障描述', repairMethod: '维修方式', repairCost: '费用',
-        repairPerson: '维修人员', repairResult: '维修结果', recheckDate: '复检日期', notes: '备注'
-      };
-      const { valid, errors } = validateImport(sheetData, fieldMap, ['设备名称', '维修日期']);
+      if (sheetData.length === 0) { showToast('文件中没有数据。', 'error'); e.target.value = ''; return; }
+
+      const actualHeaders = Object.keys(sheetData[0]);
+      const { resolved, unmatched } = resolveImportColumns(actualHeaders, COLUMN_ALIASES);
+      const unmatchedRequired = unmatched.filter(k => REQUIRED_KEYS.includes(k));
+
+      if (unmatchedRequired.length > 0) {
+        const names = unmatchedRequired.map(k => COLUMN_ALIASES[k][0]).join('、');
+        showToast(`未识别必填列：${names}。当前文件包含：${actualHeaders.join(', ')}。请下载模板。`, 'error');
+        e.target.value = ''; return;
+      }
+
+      const { valid, errors } = validateImport(sheetData, resolved, REQUIRED_KEYS);
       if (errors.length > 0) {
-        showToast(`导入完成：成功 ${valid.length} 条，失败 ${errors.length} 条`, 'warning');
+        const rows = errors.slice(0, 5).map(r => `第${r.row}行`).join(',');
+        showToast(`导入：${valid.length}条成功，${errors.length}条失败（${rows}）`, 'warning');
       }
       if (valid.length > 0) {
         const mapped = valid.map(row => ({
           id: uuid(),
-          equipmentName: row['设备名称'] || '',
-          equipmentNo: row['设备编号'] || '',
-          repairDate: row['维修日期'] || '',
-          faultDescription: row['故障描述'] || '',
-          repairMethod: row['维修方式'] || '自修',
-          repairCost: parseFloat(row['费用']) || 0,
-          repairPerson: row['维修人员'] || '',
-          repairResult: row['维修结果'] || '已修复',
-          recheckDate: row['复检日期'] || '',
+          equipmentName: row[resolved.equipmentName] || '',
+          equipmentNo: row[resolved.equipmentNo] || '',
+          repairDate: row[resolved.repairDate] || '',
+          faultDescription: row[resolved.faultDescription] || '',
+          repairMethod: row[resolved.repairMethod] || '自修',
+          repairCost: parseFloat(row[resolved.repairCost]) || 0,
+          repairPerson: row[resolved.repairPerson] || '',
+          repairResult: row[resolved.repairResult] || '已修复',
+          recheckDate: row[resolved.recheckDate] || '',
           attachment: '', attachmentName: '',
-          notes: row['备注'] || '',
+          notes: row[resolved.notes] || '',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }));
-        const list = getData();
-        list.push(...mapped);
-        saveData(list);
+        getData().push(...mapped);
+        saveData(getData());
         showToast(`成功导入 ${valid.length} 条维修记录`);
         renderEquipContent();
-        document.getElementById('equip-import-area').classList.add('hidden');
-        fileInput.value = '';
       }
-    } catch (err) {
-      showToast(err.message || '导入失败', 'error');
-    }
+    } catch (err) { showToast(err.message || '导入失败', 'error'); }
+    e.target.value = '';
+  });
+
+  document.getElementById('equip-template-btn').addEventListener('click', () => {
+    downloadImportTemplate(TEMPLATE_HEADERS, '设备维修', '维修记录导入模板.xlsx');
+    showToast('模板已下载。');
   });
   document.getElementById('filter-equip-name').addEventListener('input', () => renderEquipContent());
   document.getElementById('filter-equip-result').addEventListener('change', () => renderEquipContent());
