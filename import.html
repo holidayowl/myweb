@@ -18,12 +18,18 @@ async function doImport() {
     const resp = await fetch('data/import-data.json');
     if (!resp.ok) throw new Error('无法加载 data/import-data.json');
     const json = await resp.json();
-    log(`读取到 ${json.data.contracts.length} 条合同, ${json.data.energy.length} 条能耗`, 'ok');
+    const counts = [];
+    if (json.data.contracts) counts.push(`${json.data.contracts.length} 条合同`);
+    if (json.data.energy) counts.push(`${json.data.energy.length} 条能耗`);
+    if (json.data.property) counts.push(`${json.data.property.length} 条物业支出`);
+    if (json.data.equipment) counts.push(`${json.data.equipment.length} 条设备维修`);
+    if (json.data.others) counts.push(`${json.data.others.length} 条其他工作`);
+    log('读取到 ' + counts.join('、'), 'ok');
 
     for (const [key, val] of Object.entries(json.data)) {
       localStorage.setItem('myweb_' + key, JSON.stringify(val));
     }
-    log('所有数据已写入 localStorage', 'ok');
+    log('所有数据已写入，共 ' + counts.join('、'), 'ok');
     log('导入完成！2秒后跳转到首页...', '');
     setTimeout(() => { location.href = 'index.html'; }, 2000);
   } catch (e) {
