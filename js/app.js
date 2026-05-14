@@ -92,7 +92,7 @@ function registerRoutes() {
   });
 
   router.register('#/energy', {
-    title: '能耗用量',
+    title: '能耗信息',
     guard: isLoggedIn,
     render: () => renderEnergyList(),
     afterRender: () => setupEnergyEvents(),
