@@ -13,6 +13,12 @@ import { scanAlerts, renderAlertDrawer, updateAlertBadge } from './alerts.js';
 import { renderHomePage, setupHomeEvents } from './modules/home.js';
 
 function setupEventListeners() {
+  document.getElementById('refresh-btn').addEventListener('click', () => {
+    const hash = location.hash || '#/login';
+    location.hash = '#/refresh-temp';
+    setTimeout(() => { location.hash = hash; }, 10);
+  });
+
   document.getElementById('sidebar-toggle').addEventListener('click', () => {
     document.getElementById('sidebar-nav').classList.toggle('open');
   });
@@ -42,8 +48,10 @@ function setupEventListeners() {
     a.addEventListener('click', () => mobileMoreMenu.classList.add('hidden'));
   });
 
-  document.getElementById('app-content').addEventListener('click', () => {
-    document.getElementById('sidebar-nav').classList.remove('open');
+  document.getElementById('app-content').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) {
+      document.getElementById('sidebar-nav').classList.remove('open');
+    }
   });
 }
 

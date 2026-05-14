@@ -147,23 +147,36 @@ property_files = [
 
 # Classification keywords (order matters - first match wins)
 CLASSIFY_RULES = [
-    # (keywords, expenseType)
-    (['电梯', '空调', '锅炉', '冷却塔', '配电', '变压器', '高低压', '发电', '设备维保',
-      'LED', '屏幕', '显示器', '监控', '摄像头', '门禁', '道闸', '消防', '报警',
-      '排烟', '风机', '水泵', '电机', '压缩机', '控制柜', '变频', '弱电', '智能化',
-      '机械', '立体车库', '停车设备', '擦窗机', '卷帘门', '伸缩门', '电动门'], '设备维保费'),
+    # 物业费（保安保洁礼仪接待）
     (['保洁', '清洁', '消杀', '除四害', '灭鼠', '灭蟑', '虫控', '防疫',
-      '垃圾', '清运', '化粪池', '隔油池', '管道疏通', '清洗水池', '水箱清洗'], '保洁费'),
-    (['绿化', '花卉', '草坪', '树木', '修剪', '绿植', '盆景', '园林'], '绿化费'),
-    (['安保', '保安', '巡更', '对讲', '岗亭'], '安保费'),
+      '垃圾', '清运', '化粪池', '隔油池', '管道疏通', '清洗水池', '水箱清洗',
+      '安保', '保安', '巡更', '对讲', '岗亭', '礼仪', '前台', '接待', '客服',
+      '前台服务', '礼仪服务', '会务', '礼宾', '迎宾'], '物业费（保安保洁礼仪接待）'),
+    # 房屋和设备维修费
     (['水管', '水暖', '水龙头', '阀门', '洁具', '灯具', '开关', '插座', '电线',
       '电缆', '灯管', '灯泡', '镇流器', '断路器', '继电器', '接触器', '熔断器',
       '管道', '接头', '弯头', '三通', '法兰', '密封', '垫片', '螺栓', '五金',
       '油漆', '涂料', '玻璃', '胶', '水泥', '砂石', '瓷砖', '地板', '地毯',
-      '锁具', '铰链', '把手', '滑轨', '闭门器', '维修耗材', '材料'], '维修耗材费'),
-    (['水费', '电费', '水表', '电表', '给水', '排水', '供水', '供电', '用水',
+      '锁具', '铰链', '把手', '滑轨', '闭门器', '维修耗材', '材料',
+      '水费', '电费', '水表', '电表', '给水', '排水', '供水', '供电', '用水',
       '水电维修', '水电改造', '水电安装', '水箱', '水质检测', '水质', '防水',
-      '漏水', '渗水', '堵漏', '污水', '雨水', '冷凝水'], '水电维修'),
+      '漏水', '渗水', '堵漏', '污水', '雨水', '冷凝水',
+      '门窗', '幕墙', '防水', '屋面', '外墙', '渗漏', '裂缝', '沉降',
+      '土建', '装修', '粉刷', '贴砖', '吊顶', '隔断', '围墙', '道路'], '房屋和设备维修费'),
+    # 安全费
+    (['安全', '消防', '灭火器', '消火栓', '喷淋', '烟感', '温感', '报警',
+      '应急', '疏散', '防火', '防雷', '防爆', '防静电',
+      '安全帽', '安全带', '安全网', '防护', '警示', '标识',
+      '职业病', '体检', '安全培训', '安全评价', '安全检测',
+      '电梯年检', '锅炉年检', '压力容器', '特种设备检验'], '安全费'),
+    # 环境和设备维保费
+    (['绿化', '花卉', '草坪', '树木', '修剪', '绿植', '盆景', '园林',
+      '电梯', '空调', '锅炉', '冷却塔', '配电', '变压器', '高低压', '发电',
+      '设备维保', '设备维护', '设备保养',
+      'LED', '屏幕', '显示器', '监控', '摄像头', '门禁', '道闸',
+      '排烟', '风机', '水泵', '电机', '压缩机', '控制柜', '变频', '弱电', '智能化',
+      '机械', '立体车库', '停车设备', '擦窗机', '卷帘门', '伸缩门', '电动门',
+      '环境检测', '环境监测', '环保', '排污', '噪声', '废气', '废水'], '环境和设备维保费'),
 ]
 
 def classify_expense(item_name):
@@ -322,3 +335,70 @@ total_cost = sum(e.get('cost', 0) for e in energy)
 print(f'能耗总费用: {total_cost:,.0f} yuan')
 print(f'文件大小: {len(json.dumps(output, ensure_ascii=False)):,} bytes')
 print('Done: data/import-data.json')
+
+# ============================================================
+# 5. 生成整理后的 Excel 文件
+# ============================================================
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+
+def write_excel(filepath, sheets_data):
+    wb = Workbook()
+    wb.remove(wb.active)
+    hfont = Font(bold=True, size=11, color='FFFFFF')
+    hfill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+    for sname, headers, rows in sheets_data:
+        ws = wb.create_sheet(title=sname[:31])
+        for c, h in enumerate(headers, 1):
+            cell = ws.cell(1, c, h)
+            cell.font = hfont; cell.fill = hfill
+            cell.alignment = Alignment(horizontal='center')
+        for r, row in enumerate(rows, 2):
+            for c, val in enumerate(row, 1):
+                ws.cell(r, c, val)
+        for c in range(1, len(headers)+1):
+            max_w = len(str(headers[c-1]))
+            for ri in range(2, len(rows)+2):
+                v = str(ws.cell(ri, c).value or '')
+                if len(v) > max_w: max_w = len(v)
+            ws.column_dimensions[get_column_letter(c)].width = min(max(max_w, 8), 40) + 4
+    wb.save(filepath)
+    print(f'  Saved: {filepath}')
+
+# 合同
+write_excel('data/合同目录汇总.xlsx', [('合同目录',
+    ['合同名称','合同编号','合作方','签订日期','有效期起','有效期止','金额','状态','合同内容','备注'],
+    [[c['contractName'],c['contractNo'],c['partner'],c['signDate'],c['startDate'],c['endDate'],
+      c['amount'] if c['amount']>0 else '非固定金额',
+      '有效' if c['status']=='active' else ('已终止' if c['status']=='terminated' else '已过期'),
+      c['content'],c['notes']] for c in contracts]
+)])
+
+# 能耗
+type_cn = {'water':'水','electric':'电','gas':'气'}
+write_excel('data/能耗信息汇总.xlsx', [('能耗信息',
+    ['能耗类型','统计周期','用量','单位','费用(元)','备注'],
+    [[type_cn.get(e['energyType'],e['energyType']), e['period'], e['value'], e['unit'], e.get('cost',0), e['notes']]
+     for e in sorted(energy, key=lambda x: (x['period'], x['energyType']))]
+)])
+
+# 物业运维（按年份分Sheet）
+prop_by_year = {}
+for r in sorted(property_data, key=lambda x: x['expenseDate']):
+    y = r['expenseDate'][:4] if r['expenseDate'] else '未知'
+    if y not in prop_by_year: prop_by_year[y] = []
+    prop_by_year[y].append([r['expenseType'], r['amount'], r['expenseDate'], r['paymentMethod'], r['purpose'], r['notes']])
+
+prop_sheets = [('全部汇总',
+    ['支出项目','金额','日期','支付方式','用途','备注'],
+    [[r['expenseType'], r['amount'], r['expenseDate'], r['paymentMethod'], r['purpose'], r['notes']]
+     for r in sorted(property_data, key=lambda x: x['expenseDate'])]
+)]
+for y in sorted(prop_by_year.keys()):
+    prop_sheets.append((f'{y}年',
+        ['支出项目','金额','日期','支付方式','用途','备注'],
+        prop_by_year[y]
+    ))
+write_excel('data/物业运维支出总表.xlsx', prop_sheets)
+print('Excel files generated.')

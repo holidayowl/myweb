@@ -10,16 +10,24 @@ export function renderHomePage() {
   const others = get('others') || [];
   const syncState = get('sync_state') || {};
 
+  const settings = get('settings') || {};
+  const remindDays = settings.contractExpiryRemindDays || 30;
   const activeContracts = contracts.filter(c => c.status !== 'terminated' && daysFromNow(c.endDate) >= 0);
-  const expiringSoon = activeContracts.filter(c => daysFromNow(c.endDate) <= 30).length;
+  const expiringSoon = activeContracts.filter(c => daysFromNow(c.endDate) <= remindDays).length;
   const totalAmount = activeContracts.reduce((s, c) => s + (Number(c.amount) || 0), 0);
 
   const thisMonth = new Date().toISOString().slice(0, 7);
   const monthProperty = property.filter(d => d.expenseDate && d.expenseDate.startsWith(thisMonth)).reduce((s, d) => s + (Number(d.amount) || 0), 0);
   const monthEnergy = energy.filter(d => d.period === thisMonth);
 
+  const thisYear = new Date().getFullYear().toString();
+  const thisYearEnergy = energy.filter(d => d.period && d.period.startsWith(thisYear));
+  const thisYearCost = thisYearEnergy.reduce((s, d) => s + (Number(d.cost) || 0), 0);
+
   const pendingRecheck = equipment.filter(d => d.repairResult === '待复检').length;
   const monthOthers = others.filter(d => d.recordDate && d.recordDate.startsWith(thisMonth)).length;
+  const thisYearProperty = property.filter(d => d.expenseDate && d.expenseDate.startsWith(thisYear));
+  const thisYearPropertyCost = thisYearProperty.reduce((s, d) => s + (Number(d.amount) || 0), 0);
 
   const alerts = scanAlerts();
 
@@ -30,20 +38,21 @@ export function renderHomePage() {
       <div class="stat-card" data-link="#/contracts">
         <div class="stat-label">📋 有效合同</div>
         <div class="stat-value">${activeContracts.length}</div>
-        <div class="stat-sub">${expiringSoon > 0 ? `即将到期 ${expiringSoon} 份` : '暂无即将到期合同'}</div>
+        <div class="stat-sub">${expiringSoon > 0 ? `${remindDays}天内到期 ${expiringSoon} 份` : `暂无${remindDays}天内到期合同`}</div>
       </div>
       <div class="stat-card" data-link="#/contracts">
         <div class="stat-label">💰 合同总金额</div>
         <div class="stat-value">${formatCurrency(totalAmount)}</div>
       </div>
       <div class="stat-card" data-link="#/energy">
-        <div class="stat-label">⚡ 本月能耗记录</div>
-        <div class="stat-value">${monthEnergy.length}</div>
-        <div class="stat-sub">${monthEnergy.map(e => `${e.energyType === 'electric' ? '电' : e.energyType === 'water' ? '水' : '气'}: ${formatNumber(e.value)}${e.unit}`).join(' / ') || '本月暂无记录'}</div>
+        <div class="stat-label">⚡ ${thisYear}年能耗用量</div>
+        <div class="stat-value">${thisYearEnergy.length} <span style="font-size:14px">条</span></div>
+        <div class="stat-sub">费用支出 ${formatCurrency(thisYearCost)}</div>
       </div>
       <div class="stat-card" data-link="#/property">
-        <div class="stat-label">🏗️ 本月运维支出</div>
-        <div class="stat-value">${formatCurrency(monthProperty)}</div>
+        <div class="stat-label">🏗️ ${thisYear}年运维支出</div>
+        <div class="stat-value">${formatCurrency(thisYearPropertyCost)}</div>
+        <div class="stat-sub">${thisYearProperty.length} 条记录</div>
       </div>
       <div class="stat-card ${pendingRecheck > 0 ? 'stat-warning' : ''}" data-link="#/equipment">
         <div class="stat-label">🔧 待复检设备</div>

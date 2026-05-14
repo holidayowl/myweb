@@ -15,7 +15,7 @@ const REQUIRED_KEYS = ['expenseType', 'amount', 'expenseDate'];
 const TEMPLATE_HEADERS = ['支出项目', '金额', '日期', '支付方式', '用途说明', '备注'];
 
 const PAGE_KEY = 'property_page';
-const EXPENSE_TYPES = ['设备维保费', '保洁费', '绿化费', '安保费', '维修耗材费', '水电维修', '其他'];
+const EXPENSE_TYPES = ['物业费（保安保洁礼仪接待）', '房屋和设备维修费', '安全费', '环境和设备维保费', '其他'];
 const PAYMENT_METHODS = ['银行转账', '现金', '微信', '支付宝', '其他'];
 
 function getData() { return get('property') || []; }
@@ -25,19 +25,26 @@ export function renderPropertyList() {
   const data = getData();
   const settings = get('settings') || {};
   const threshold = settings.largeExpenseThreshold || 5000;
-  const total = data.reduce((s, d) => s + (Number(d.amount) || 0), 0);
-  const largeCount = data.filter(d => (Number(d.amount) || 0) >= threshold).length;
-  const thisMonth = new Date().toISOString().slice(0, 7);
-  const monthTotal = data.filter(d => d.expenseDate && d.expenseDate.startsWith(thisMonth)).reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const thisYear = String(new Date().getFullYear());
+  const thisYearData = data.filter(d => d.expenseDate && d.expenseDate.startsWith(thisYear));
+  const thisYearTotal = thisYearData.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  const thisYearLarge = thisYearData.filter(d => (Number(d.amount) || 0) >= threshold).length;
+  const prevYears = [...new Set(data.filter(d => d.expenseDate && !d.expenseDate.startsWith(thisYear)).map(d => d.expenseDate.slice(0, 4)))].sort().reverse();
 
   return `
     <div class="page-header"><h2>🏗️ 物业运维支出</h2></div>
     <div class="stat-cards">
-      <div class="stat-card"><div class="stat-label">当月支出</div><div class="stat-value">${formatCurrency(monthTotal)}</div></div>
-      <div class="stat-card"><div class="stat-label">累计总支出</div><div class="stat-value">${formatCurrency(total)}</div></div>
-      <div class="stat-card stat-warning"><div class="stat-label">大额支出（≥${formatCurrency(threshold)}）</div><div class="stat-value">${largeCount} <span style="font-size:14px">笔</span></div></div>
-      <div class="stat-card"><div class="stat-label">支出类别</div><div class="stat-value">${[...new Set(data.map(d => d.expenseType))].length} <span style="font-size:14px">类</span></div></div>
+      <div class="stat-card"><div class="stat-label">${thisYear}年总支出</div><div class="stat-value">${formatCurrency(thisYearTotal)}</div></div>
+      <div class="stat-card"><div class="stat-label">${thisYear}年记录数</div><div class="stat-value">${thisYearData.length} <span style="font-size:14px">条</span></div></div>
+      <div class="stat-card stat-warning"><div class="stat-label">大额支出（≥${formatCurrency(threshold)}）</div><div class="stat-value">${thisYearLarge} <span style="font-size:14px">笔</span></div></div>
+      <div class="stat-card"><div class="stat-label">支出类别</div><div class="stat-value">${[...new Set(thisYearData.map(d => d.expenseType))].length} <span style="font-size:14px">类</span></div></div>
     </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">📅 ${thisYear}年月度支出明细</div>
+      <div style="overflow-x:auto"><table class="data-table" id="prop-monthly-table"></table></div>
+    </div>
+
     <div id="property-filter" class="filter-bar">
       <select id="filter-prop-type" class="form-select" style="min-width:140px">
         <option value="all">全部类别</option>
@@ -53,16 +60,25 @@ export function renderPropertyList() {
       <button id="prop-export-btn" class="btn btn-outline">📤 导出Excel</button>
     </div>
     <input type="file" id="prop-import-file" accept=".xlsx,.xls" style="display:none">
-    <div class="card" style="overflow-x:auto">
-      <table class="data-table">
-        <thead><tr><th>支出项目</th><th>金额</th><th>日期</th><th>支付方式</th><th>大额</th><th>用途</th><th>操作</th></tr></thead>
-        <tbody id="property-tbody"></tbody>
-      </table>
-      <div id="property-pagination" class="pagination"></div>
+
+    ${prevYears.length > 0 ? `
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header" style="cursor:pointer" onclick="this.parentElement.querySelector('.history-body').classList.toggle('hidden')">
+        📂 历年支出明细（点击展开/收起）
+      </div>
+      <div class="history-body hidden" style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>支出项目</th><th>金额</th><th>日期</th><th>支付方式</th><th>大额</th><th>用途</th><th>操作</th></tr></thead>
+          <tbody id="property-tbody"></tbody>
+        </table>
+        <div id="property-pagination" class="pagination"></div>
+      </div>
     </div>
+    ` : ''}
+
     <div class="charts-row">
-      <div class="chart-box"><h4>支出类别占比</h4><div style="height:280px;position:relative"><canvas id="chart-prop-type"></canvas></div></div>
-      <div class="chart-box"><h4>月度支出趋势</h4><div style="height:280px;position:relative"><canvas id="chart-prop-trend"></canvas></div></div>
+      <div class="chart-box"><h4>${thisYear}年支出类别占比</h4><div style="height:280px;position:relative"><canvas id="chart-prop-type"></canvas></div></div>
+      <div class="chart-box"><h4>${thisYear}年月度支出趋势</h4><div style="height:280px;position:relative"><canvas id="chart-prop-trend"></canvas></div></div>
     </div>
   `;
 }
@@ -70,8 +86,9 @@ export function renderPropertyList() {
 export function setupPropertyEvents() {
   renderPropertyContent();
   document.getElementById('prop-add-btn').addEventListener('click', () => showPropertyForm(null));
-
   document.getElementById('prop-import-btn').addEventListener('click', () => {
+    document.getElementById('prop-import-file').click();
+  });
     document.getElementById('prop-import-file').click();
   });
 
@@ -150,56 +167,93 @@ export function cleanupProperty() {
 
 function renderPropertyContent() {
   let data = getData();
-  const typeF = document.getElementById('filter-prop-type').value;
-  const monthF = document.getElementById('filter-prop-month').value;
-  if (typeF !== 'all') data = data.filter(d => d.expenseType === typeF);
-  if (monthF) data = data.filter(d => d.expenseDate && d.expenseDate.startsWith(monthF));
-
-  data.sort((a, b) => new Date(b.expenseDate || b.createdAt) - new Date(a.expenseDate || a.createdAt));
   const settings = get('settings') || {};
   const threshold = settings.largeExpenseThreshold || 5000;
-  const p = paginate(data, PAGE_KEY, 15);
+  const thisYear = String(new Date().getFullYear());
 
+  // ===== Monthly breakdown table (current year) =====
+  const thisYearData = data.filter(d => d.expenseDate && d.expenseDate.startsWith(thisYear));
+  const monthMap = {};
+  const MONTHS = ['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月'];
+  for (const d of thisYearData) {
+    const m = parseInt(d.expenseDate.slice(5,7)) - 1;
+    if (!monthMap[m]) monthMap[m] = { items: [], total: 0 };
+    monthMap[m].items.push(d);
+    monthMap[m].total += Number(d.amount) || 0;
+  }
+
+  let monthlyHtml = '<thead><tr><th>月份</th><th>条数</th><th>月合计</th><th>主要项目</th></tr></thead><tbody>';
+  for (let i = 0; i < 12; i++) {
+    const m = monthMap[i];
+    if (m) {
+      const topItems = m.items.slice(0, 3).map(d => `${d.expenseType.split('（')[0]} ${formatCurrency(d.amount)}`).join('; ');
+      monthlyHtml += `<tr>
+        <td><strong>${MONTHS[i]}</strong></td>
+        <td>${m.items.length}</td>
+        <td><strong>${formatCurrency(m.total)}</strong></td>
+        <td style="font-size:12px;color:var(--text-secondary);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${topItems || '-'}</td>
+      </tr>`;
+    } else {
+      monthlyHtml += `<tr><td>${MONTHS[i]}</td><td>0</td><td>-</td><td style="color:var(--text-muted)">无记录</td></tr>`;
+    }
+  }
+  monthlyHtml += '</tbody>';
+  const monthlyTable = document.getElementById('prop-monthly-table');
+  if (monthlyTable) monthlyTable.innerHTML = monthlyHtml;
+
+  // ===== Historical detail table =====
+  const filterEl = document.getElementById('filter-prop-type');
+  const monthEl = document.getElementById('filter-prop-month');
+  const typeF = filterEl ? filterEl.value : 'all';
+  const monthF = monthEl ? monthEl.value : '';
+
+  let filtered = data;
+  if (typeF !== 'all') filtered = filtered.filter(d => d.expenseType === typeF);
+  if (monthF) filtered = filtered.filter(d => d.expenseDate && d.expenseDate.startsWith(monthF));
+  filtered.sort((a, b) => new Date(b.expenseDate || b.createdAt) - new Date(a.expenseDate || a.createdAt));
+
+  const p = paginate(filtered, PAGE_KEY, 15);
   const tbody = document.getElementById('property-tbody');
-  if (p.items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据，点击 "+ 新增支出" 开始记录</td></tr>`;
-  } else {
-    tbody.innerHTML = p.items.map(d => `
-      <tr>
-        <td><strong>${esc(d.expenseType)}</strong></td>
-        <td>${formatCurrency(d.amount)}</td>
-        <td>${formatDate(d.expenseDate)}</td>
-        <td>${esc(d.paymentMethod)}</td>
-        <td>${(Number(d.amount) || 0) >= threshold ? '<span class="tag tag-warning">大额</span>' : '-'}</td>
-        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.purpose)}</td>
-        <td class="actions">
-          <button class="btn btn-outline btn-sm" data-edit="${d.id}">编辑</button>
-          <button class="btn btn-outline btn-sm" data-delete="${d.id}" style="color:var(--danger)">删除</button>
-        </td>
-      </tr>
-    `).join('');
+  if (tbody) {
+    if (p.items.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</td></tr>`;
+    } else {
+      tbody.innerHTML = p.items.map(d => `
+        <tr>
+          <td><strong>${esc(d.expenseType)}</strong></td>
+          <td>${formatCurrency(d.amount)}</td>
+          <td>${formatDate(d.expenseDate)}</td>
+          <td>${esc(d.paymentMethod)}</td>
+          <td>${(Number(d.amount) || 0) >= threshold ? '<span class="tag tag-warning">大额</span>' : '-'}</td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.purpose)}</td>
+          <td class="actions">
+            <button class="btn btn-outline btn-sm" data-edit="${d.id}">编辑</button>
+            <button class="btn btn-outline btn-sm" data-delete="${d.id}" style="color:var(--danger)">删除</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+    tbody.querySelectorAll('[data-edit]').forEach(btn => btn.addEventListener('click', () => showPropertyForm(btn.dataset.edit)));
+    tbody.querySelectorAll('[data-delete]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (confirm('确定要删除这条记录吗？')) {
+          saveData(getData().filter(d => d.id !== btn.dataset.delete));
+          showToast('已删除');
+          renderPropertyContent();
+        }
+      });
+    });
   }
 
   const pagDiv = document.getElementById('property-pagination');
-  if (p.totalPages > 1) {
+  if (pagDiv && p.totalPages > 1) {
     pagDiv.innerHTML = buildPagination(p);
     pagDiv.querySelectorAll('button').forEach(btn => {
       btn.addEventListener('click', () => { p.setPage(parseInt(btn.dataset.page)); renderPropertyContent(); });
     });
-  } else { pagDiv.innerHTML = ''; }
+  } else if (pagDiv) { pagDiv.innerHTML = ''; }
 
-  tbody.querySelectorAll('[data-edit]').forEach(btn => btn.addEventListener('click', () => showPropertyForm(btn.dataset.edit)));
-  tbody.querySelectorAll('[data-delete]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (confirm('确定要删除这条记录吗？')) {
-        saveData(getData().filter(d => d.id !== btn.dataset.delete));
-        showToast('已删除');
-        renderPropertyContent();
-      }
-    });
-  });
-
-  renderPropertyCharts(data);
+  renderPropertyCharts(thisYearData);
 }
 
 function renderPropertyCharts(data) {

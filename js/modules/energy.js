@@ -160,22 +160,24 @@ function renderEnergyContent(filter = {}) {
   if (typeFilter && typeFilter !== 'all') data = data.filter(d => d.energyType === typeFilter);
   if (periodFilter) data = data.filter(d => d.period.startsWith(periodFilter));
 
-  // Stats: usage + cost
+  // Stats: this year usage + cost only
+  const thisYear = String(new Date().getFullYear());
+  const thisYearData = data.filter(d => d.period && d.period.startsWith(thisYear));
   const stats = {};
   const costStats = {};
-  for (const d of data) {
+  for (const d of thisYearData) {
     if (!stats[d.energyType]) { stats[d.energyType] = 0; costStats[d.energyType] = 0; }
     stats[d.energyType] += Number(d.value) || 0;
     costStats[d.energyType] += Number(d.cost) || 0;
   }
-  const abnormal = data.filter(d => d.isAbnormal).length;
 
   let statsHtml = '';
   for (const t of ENERGY_TYPES) {
     const val = stats[t.value] || 0;
     const cst = costStats[t.value] || 0;
-    statsHtml += `<div class="stat-card"><div class="stat-label">${t.label}累计用量</div><div class="stat-value">${formatNumber(val)} <span style="font-size:14px">${UNITS[t.value]}</span></div><div class="stat-sub">费用: ${formatCurrency(cst)}</div></div>`;
+    statsHtml += `<div class="stat-card"><div class="stat-label">${thisYear}年${t.label}用量</div><div class="stat-value">${formatNumber(val)} <span style="font-size:14px">${UNITS[t.value]}</span></div><div class="stat-sub">费用: ${formatCurrency(cst)}</div></div>`;
   }
+  const abnormal = data.filter(d => d.isAbnormal).length;
   statsHtml += `<div class="stat-card ${abnormal > 0 ? 'stat-warning' : ''}"><div class="stat-label">异常记录</div><div class="stat-value">${abnormal} <span style="font-size:14px">条</span></div></div>`;
   document.getElementById('energy-stats').innerHTML = statsHtml;
 
@@ -249,7 +251,7 @@ function renderYearlyOverview(data) {
     let yTotal = 0;
     for (const t of ENERGY_TYPES) {
       const d = (years[y] && years[y][t.value]) || { value: 0, cost: 0 };
-      html += `<td>${formatNumber(d.value)} ${UNITS[t.value]}</td><td>${formatCurrency(d.cost)}</td>`;
+      html += `<td>${Math.round(d.value).toLocaleString('zh-CN')} ${UNITS[t.value]}</td><td>${formatCurrency(d.cost)}</td>`;
       yTotal += d.cost;
     }
     html += `<td><strong>${formatCurrency(yTotal)}</strong></td></tr>`;
@@ -262,20 +264,45 @@ function renderYoYComparison(data) {
   const now = new Date();
   const thisYear = String(now.getFullYear());
   const lastYear = String(now.getFullYear() - 1);
-  const thisMonth = now.getMonth() + 1;
+
+  // Find the latest month that exists in this year's data
+  let latestMonth = 0;
+  for (const d of data) {
+    if (d.period && d.period.startsWith(thisYear)) {
+      const m = parseInt(d.period.slice(5, 7));
+      if (m > latestMonth) latestMonth = m;
+    }
+  }
+  // Also check last year's available months
+  let lastYearLatest = 0;
+  for (const d of data) {
+    if (d.period && d.period.startsWith(lastYear)) {
+      const m = parseInt(d.period.slice(5, 7));
+      if (m > lastYearLatest) lastYearLatest = m;
+    }
+  }
+  const compareMonths = Math.min(latestMonth, lastYearLatest);
+  if (compareMonths === 0) {
+    document.getElementById('energy-yoy-body').innerHTML = '<p style="color:var(--text-muted);text-align:center;padding:16px">数据不足，无法对比</p>';
+    return;
+  }
 
   const calc = (year, type) => {
     let val = 0, cost = 0, count = 0;
     for (const d of data) {
-      if (d.energyType === type && d.period.startsWith(year) && parseInt(d.period.slice(5,7)) <= thisMonth) {
-        val += Number(d.value) || 0;
-        cost += Number(d.cost) || 0;
-        count++;
+      if (d.energyType === type && d.period.startsWith(year)) {
+        const m = parseInt(d.period.slice(5,7));
+        if (m <= compareMonths) {
+          val += Number(d.value) || 0;
+          cost += Number(d.cost) || 0;
+          count++;
+        }
       }
     }
     return { val, cost, count };
   };
 
+  const monthLabel = `同期1-${compareMonths}月`;
   let html = '<table class="data-table"><thead><tr><th>类型</th><th>指标</th><th>去年(' + lastYear + ')</th><th>今年(' + thisYear + ')</th><th>变化</th></tr></thead><tbody>';
 
   for (const t of ENERGY_TYPES) {
@@ -291,6 +318,7 @@ function renderYoYComparison(data) {
     html += `<tr><td>费用</td><td>${formatCurrency(ly.cost)}</td><td>${formatCurrency(ty.cost)}</td>
       <td>${costChg !== '-' ? (Number(costChg) >= 0 ? '<span style="color:var(--danger)">+' : '<span style="color:var(--success)">') + costChg + '%</span>' : '-'}</td></tr>`;
   }
+  html += `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);font-size:12px;padding-top:8px">对比范围：${monthLabel}（两年度均有数据的月份）</td></tr>`;
   html += '</tbody></table>';
   document.getElementById('energy-yoy-body').innerHTML = html;
 }

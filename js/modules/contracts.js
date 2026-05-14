@@ -18,6 +18,8 @@ const REQUIRED_KEYS = ['contractName', 'partner'];
 const TEMPLATE_HEADERS = ['合同名称', '合同编号', '合作方', '签订日期', '有效期起', '有效期止', '金额', '合同内容', '备注'];
 
 const PAGE_KEY = 'contracts_page';
+let sortField = null;
+let sortDir = 'asc';
 
 function getContracts() { return get('contracts') || []; }
 function saveContracts(data) { set('contracts', data); }
@@ -40,11 +42,16 @@ function getStatusTag(status) {
   return 'tag-default';
 }
 
+function getRemindDays() {
+  return (get('settings') || {}).contractExpiryRemindDays || 30;
+}
+
 function getRemainingLabel(contract) {
   if (contract.status === 'terminated') return '-';
   const days = daysFromNow(contract.endDate);
+  const remindDays = getRemindDays();
   if (days < 0) return `<span class="tag tag-danger">已过期${Math.abs(days)}天</span>`;
-  if (days <= 30) return `<span class="tag tag-warning">剩余${days}天</span>`;
+  if (days <= remindDays) return `<span class="tag tag-warning">剩余${days}天</span>`;
   return `<span class="tag tag-success">剩余${days}天</span>`;
 }
 
@@ -52,8 +59,9 @@ export function renderContractList() {
   const contracts = getContracts();
   const now = today();
 
+  const remindDays = getRemindDays();
   const active = contracts.filter(c => computeStatus(c) === 'active');
-  const expiringSoon = active.filter(c => daysFromNow(c.endDate) <= 30);
+  const expiringSoon = active.filter(c => daysFromNow(c.endDate) <= remindDays);
   const totalAmount = active.reduce((s, c) => s + (Number(c.amount) || 0), 0);
   const partners = [...new Set(contracts.map(c => c.partner).filter(Boolean))];
 
@@ -109,9 +117,9 @@ export function renderContractList() {
             <th>合同名称</th>
             <th>编号</th>
             <th>合作方</th>
-            <th>金额</th>
+            <th class="sortable" data-sort="amount">金额 ${sortField === 'amount' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</th>
             <th>有效期</th>
-            <th>剩余时间</th>
+            <th class="sortable" data-sort="remaining">剩余时间 ${sortField === 'remaining' ? (sortDir === 'asc' ? '▲' : '▼') : '⇅'}</th>
             <th>状态</th>
             <th>操作</th>
           </tr>
@@ -138,6 +146,17 @@ export function renderContractList() {
 export function setupContractEvents() {
   renderTable();
   renderCharts();
+
+  document.querySelectorAll('.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const field = th.dataset.sort;
+      if (sortField === field) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+      else { sortField = field; sortDir = 'asc'; }
+      renderTable();
+      renderContractList(); // re-render HTML for updated sort arrows
+      setupContractEvents(); // re-bind events
+    });
+  });
 
   document.getElementById('contract-add-btn').addEventListener('click', () => showContractForm(null));
   document.getElementById('contract-import-btn').addEventListener('click', () => {
@@ -258,7 +277,7 @@ function filterContracts(contracts, filter) {
     if (filter.status === 'active' && status !== 'active') return false;
     if (filter.status === 'expiring') {
       if (status !== 'active') return false;
-      if (daysFromNow(c.endDate) > 30) return false;
+      if (daysFromNow(c.endDate) > getRemindDays()) return false;
     }
     if (filter.status === 'expired' && status !== 'expired') return false;
     if (filter.status === 'terminated' && status !== 'terminated') return false;
@@ -271,7 +290,13 @@ function filterContracts(contracts, filter) {
 function renderTable(filter = {}) {
   let contracts = getContracts();
   contracts = filterContracts(contracts, filter || {});
-  contracts.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  if (sortField === 'amount') {
+    contracts.sort((a, b) => sortDir === 'asc' ? (a.amount || 0) - (b.amount || 0) : (b.amount || 0) - (a.amount || 0));
+  } else if (sortField === 'remaining') {
+    contracts.sort((a, b) => sortDir === 'asc' ? daysFromNow(a.endDate) - daysFromNow(b.endDate) : daysFromNow(b.endDate) - daysFromNow(a.endDate));
+  } else {
+    contracts.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+  }
 
   const p = paginate(contracts, PAGE_KEY, 15);
 
