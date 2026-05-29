@@ -222,7 +222,7 @@ function exportFullReport() {
       })),
     },
     {
-      name: '物业运维支出',
+      name: '支出统计',
       headers: ['expenseType', 'amount', 'expenseDate', 'paymentMethod', 'purpose', 'notes'],
       data: property.map(d => ({
         expenseType: d.expenseType,

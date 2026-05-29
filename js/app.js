@@ -1,7 +1,7 @@
 import { router } from './router.js';
 import { closeModal } from './utils.js';
 import { isLoggedIn, isInitialized, renderLoginPage, setupAuthEvents, logout } from './auth.js';
-import { initAllKeys } from './storage.js';
+import { autoLoadData } from './storage.js';
 import { renderContractList, setupContractEvents, cleanupContracts } from './modules/contracts.js';
 import { renderEnergyList, setupEnergyEvents, cleanupEnergy } from './modules/energy.js';
 import { renderPropertyList, setupPropertyEvents, cleanupProperty } from './modules/property.js';
@@ -108,7 +108,7 @@ function registerRoutes() {
   });
 
   router.register('#/property', {
-    title: '物业运维',
+    title: '支出统计',
     guard: isLoggedIn,
     render: () => renderPropertyList(),
     afterRender: () => setupPropertyEvents(),
@@ -152,7 +152,7 @@ function init() {
   registerRoutes();
 
   const originalResolve = router.resolve.bind(router);
-  router.resolve = function () {
+  router.resolve = async function () {
     const hash = location.hash || '#/login';
     const route = this.routes[hash];
     if (route && route.guard && !route.guard()) {
@@ -165,7 +165,7 @@ function init() {
     }
 
     if (hash !== '#/login' && isLoggedIn()) {
-      initAllKeys();
+      await autoLoadData();
     }
 
     if (this.currentCleanup) {

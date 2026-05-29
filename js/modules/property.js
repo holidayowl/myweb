@@ -1,4 +1,4 @@
-import { get, set } from '../storage.js';
+import { get, set, migrateData } from '../storage.js';
 import { uuid, formatDate, formatCurrency, today, showToast, showModal, closeModal, confirm, paginate } from '../utils.js';
 import { createPieChart, createBarChart, destroyChart } from '../charts.js';
 import { importFromExcel, validateImport, resolveImportColumns, downloadImportTemplate, exportToExcel } from '../excel.js';
@@ -15,7 +15,7 @@ const REQUIRED_KEYS = ['expenseType', 'amount', 'expenseDate'];
 const TEMPLATE_HEADERS = ['支出项目', '金额', '日期', '支付方式', '用途说明', '备注'];
 
 const PAGE_KEY = 'property_page';
-const EXPENSE_TYPES = ['物业费（保安保洁礼仪接待）', '房屋和设备维修费', '安全费', '环境和设备维保费', '其他'];
+const EXPENSE_TYPES = ['物业费', '维保费', '维修费', '安全费', '物资采购', '其他'];
 const PAYMENT_METHODS = ['银行转账', '现金', '微信', '支付宝', '其他'];
 
 function getData() { return get('property') || []; }
@@ -29,10 +29,27 @@ export function renderPropertyList() {
   const thisYearData = data.filter(d => d.expenseDate && d.expenseDate.startsWith(thisYear));
   const thisYearTotal = thisYearData.reduce((s, d) => s + (Number(d.amount) || 0), 0);
   const thisYearLarge = thisYearData.filter(d => (Number(d.amount) || 0) >= threshold).length;
-  const prevYears = [...new Set(data.filter(d => d.expenseDate && !d.expenseDate.startsWith(thisYear)).map(d => d.expenseDate.slice(0, 4)))].sort().reverse();
+
+  // 历年汇总
+  const yearMap = {};
+  data.forEach(d => {
+    if (!d.expenseDate) return;
+    const y = d.expenseDate.slice(0, 4);
+    if (!yearMap[y]) yearMap[y] = { total: 0, count: 0 };
+    yearMap[y].total += Number(d.amount) || 0;
+    yearMap[y].count++;
+  });
+  const yearEntries = Object.entries(yearMap).sort((a, b) => b[0].localeCompare(a[0]));
+  const yearSummaryCards = yearEntries.map(([y, info]) => `
+    <div style="background:var(--bg);border-radius:6px;padding:10px 16px;text-align:center">
+      <div style="font-size:13px;color:var(--text-secondary)">${y}年</div>
+      <div style="font-size:20px;font-weight:700;color:var(--text)">${formatCurrency(info.total)}</div>
+      <div style="font-size:11px;color:var(--text-muted)">${info.count}条记录</div>
+    </div>
+  `).join('');
 
   return `
-    <div class="page-header"><h2>🏗️ 物业运维支出</h2></div>
+    <div class="page-header"><h2>🏗️ 支出统计</h2></div>
     <div class="stat-cards">
       <div class="stat-card"><div class="stat-label">${thisYear}年总支出</div><div class="stat-value">${formatCurrency(thisYearTotal)}</div></div>
       <div class="stat-card"><div class="stat-label">${thisYear}年记录数</div><div class="stat-value">${thisYearData.length} <span style="font-size:14px">条</span></div></div>
@@ -45,12 +62,23 @@ export function renderPropertyList() {
       <div style="overflow-x:auto"><table class="data-table" id="prop-monthly-table"></table></div>
     </div>
 
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header">📋 ${thisYear}年支出明细 <span style="font-weight:400;font-size:13px;color:var(--text-muted)">（共${thisYearData.length}条）</span></div>
+      <div style="overflow-x:auto">
+        <table class="data-table">
+          <thead><tr><th>支出项目</th><th>金额</th><th>日期</th><th>大额</th><th>用途</th><th>操作</th></tr></thead>
+          <tbody id="property-thisyear-tbody"></tbody>
+        </table>
+        <div id="property-thisyear-pagination" class="pagination"></div>
+      </div>
+    </div>
+
     <div id="property-filter" class="filter-bar">
       <select id="filter-prop-type" class="form-select" style="min-width:140px">
         <option value="all">全部类别</option>
         ${EXPENSE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('')}
       </select>
-      <input id="filter-prop-month" type="month" class="form-input" style="min-width:160px">
+      <input id="filter-prop-month" type="month" class="form-input" style="min-width:160px" placeholder="选择月份筛选">
       <button id="filter-prop-reset" class="btn btn-outline btn-sm">重置</button>
     </div>
     <div class="toolbar">
@@ -61,20 +89,21 @@ export function renderPropertyList() {
     </div>
     <input type="file" id="prop-import-file" accept=".xlsx,.xls" style="display:none">
 
-    ${prevYears.length > 0 ? `
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header" style="cursor:pointer" onclick="this.parentElement.querySelector('.history-body').classList.toggle('hidden')">
+      <div class="card-header prop-history-toggle" style="cursor:pointer;user-select:none">
         📂 历年支出明细（点击展开/收起）
       </div>
-      <div class="history-body hidden" style="overflow-x:auto">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;padding:0 20px 16px" class="prop-year-cards">
+        ${yearSummaryCards}
+      </div>
+      <div id="property-history-body" class="hidden" style="overflow-x:auto">
         <table class="data-table">
-          <thead><tr><th>支出项目</th><th>金额</th><th>日期</th><th>支付方式</th><th>大额</th><th>用途</th><th>操作</th></tr></thead>
+          <thead><tr><th>支出项目</th><th>金额</th><th>日期</th><th>大额</th><th>用途</th><th>操作</th></tr></thead>
           <tbody id="property-tbody"></tbody>
         </table>
         <div id="property-pagination" class="pagination"></div>
       </div>
     </div>
-    ` : ''}
 
     <div class="charts-row">
       <div class="chart-box"><h4>${thisYear}年支出类别占比</h4><div style="height:280px;position:relative"><canvas id="chart-prop-type"></canvas></div></div>
@@ -85,6 +114,15 @@ export function renderPropertyList() {
 
 export function setupPropertyEvents() {
   renderPropertyContent();
+
+  // 历年支出明细展开/收起
+  const toggleBtn = document.querySelector('.prop-history-toggle');
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      document.getElementById('property-history-body').classList.toggle('hidden');
+    });
+  }
+
   document.getElementById('prop-add-btn').addEventListener('click', () => showPropertyForm(null));
   document.getElementById('prop-import-btn').addEventListener('click', () => {
     document.getElementById('prop-import-file').click();
@@ -129,7 +167,7 @@ export function setupPropertyEvents() {
           updatedAt: new Date().toISOString(),
         }));
         getData().push(...mapped);
-        saveData(getData());
+        migrateData();
         showToast(`成功导入 ${valid.length} 条支出记录`);
         renderPropertyContent();
       }
@@ -138,15 +176,15 @@ export function setupPropertyEvents() {
   });
 
   document.getElementById('prop-template-btn').addEventListener('click', () => {
-    downloadImportTemplate(TEMPLATE_HEADERS, '物业运维支出', '运维支出导入模板.xlsx');
+    downloadImportTemplate(TEMPLATE_HEADERS, '支出统计', '支出导入模板.xlsx');
     showToast('模板已下载。');
   });
 
   document.getElementById('prop-export-btn').addEventListener('click', () => {
     const data = getData();
-    const sheets = [{ name: '物业运维支出', headers: ['支出项目', '金额', '日期', '支付方式', '用途', '备注'],
+    const sheets = [{ name: '支出统计', headers: ['支出项目', '金额', '日期', '支付方式', '用途', '备注'],
       data: data.map(d => ({ '支出项目': d.expenseType, '金额': d.amount, '日期': d.expenseDate, '支付方式': d.paymentMethod, '用途': d.purpose, '备注': d.notes })) }];
-    exportToExcel(sheets, `物业运维支出_${today()}.xlsx`);
+    exportToExcel(sheets, `支出统计_${today()}.xlsx`);
     showToast('导出成功');
   });
   document.getElementById('filter-prop-type').addEventListener('change', () => renderPropertyContent());
@@ -168,6 +206,9 @@ function renderPropertyContent() {
   const settings = get('settings') || {};
   const threshold = settings.largeExpenseThreshold || 5000;
   const thisYear = String(new Date().getFullYear());
+
+  // ===== Current year detail table =====
+  renderThisYearDetail(data, thisYear, threshold);
 
   // ===== Monthly breakdown table (current year) =====
   const thisYearData = data.filter(d => d.expenseDate && d.expenseDate.startsWith(thisYear));
@@ -214,33 +255,11 @@ function renderPropertyContent() {
   const tbody = document.getElementById('property-tbody');
   if (tbody) {
     if (p.items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted)">暂无数据</td></tr>`;
     } else {
-      tbody.innerHTML = p.items.map(d => `
-        <tr>
-          <td><strong>${esc(d.expenseType)}</strong></td>
-          <td>${formatCurrency(d.amount)}</td>
-          <td>${formatDate(d.expenseDate)}</td>
-          <td>${esc(d.paymentMethod)}</td>
-          <td>${(Number(d.amount) || 0) >= threshold ? '<span class="tag tag-warning">大额</span>' : '-'}</td>
-          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.purpose)}</td>
-          <td class="actions">
-            <button class="btn btn-outline btn-sm" data-edit="${d.id}">编辑</button>
-            <button class="btn btn-outline btn-sm" data-delete="${d.id}" style="color:var(--danger)">删除</button>
-          </td>
-        </tr>
-      `).join('');
+      tbody.innerHTML = buildPropertyRows(p.items, threshold, false);
+      bindRowActions(tbody);
     }
-    tbody.querySelectorAll('[data-edit]').forEach(btn => btn.addEventListener('click', () => showPropertyForm(btn.dataset.edit)));
-    tbody.querySelectorAll('[data-delete]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        if (confirm('确定要删除这条记录吗？')) {
-          saveData(getData().filter(d => d.id !== btn.dataset.delete));
-          showToast('已删除');
-          renderPropertyContent();
-        }
-      });
-    });
   }
 
   const pagDiv = document.getElementById('property-pagination');
@@ -252,6 +271,85 @@ function renderPropertyContent() {
   } else if (pagDiv) { pagDiv.innerHTML = ''; }
 
   renderPropertyCharts(thisYearData);
+}
+
+function renderThisYearDetail(data, thisYear, threshold) {
+  const thisYearData = data
+    .filter(d => d.expenseDate && d.expenseDate.startsWith(thisYear))
+    .sort((a, b) => new Date(b.expenseDate || b.createdAt) - new Date(a.expenseDate || a.createdAt));
+
+  const tbody = document.getElementById('property-thisyear-tbody');
+  if (!tbody) return;
+
+  if (thisYearData.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted)">本年度暂无数据</td></tr>`;
+    const pagDiv = document.getElementById('property-thisyear-pagination');
+    if (pagDiv) pagDiv.innerHTML = '';
+    return;
+  }
+
+  const p = paginateArray(thisYearData, 'property_thisyear_page', 15);
+  tbody.innerHTML = buildPropertyRows(p.items, threshold, false);
+  bindRowActions(tbody);
+
+  const pagDiv = document.getElementById('property-thisyear-pagination');
+  if (pagDiv && p.totalPages > 1) {
+    pagDiv.innerHTML = buildPagination(p);
+    pagDiv.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        p.setPage(parseInt(btn.dataset.page));
+        renderThisYearDetail(data, thisYear, threshold);
+      });
+    });
+  } else if (pagDiv) {
+    pagDiv.innerHTML = '';
+  }
+}
+
+function paginateArray(arr, pageKey, perPage) {
+  const saved = JSON.parse(sessionStorage.getItem(pageKey) || 'null') || { page: 1 };
+  const totalPages = Math.max(1, Math.ceil(arr.length / perPage));
+  const page = Math.min(saved.page, totalPages);
+  const start = (page - 1) * perPage;
+  const items = arr.slice(start, start + perPage);
+  return {
+    items, page, totalPages,
+    setPage(p) {
+      sessionStorage.setItem(pageKey, JSON.stringify({ page: p }));
+    },
+  };
+}
+
+function buildPropertyRows(items, threshold, showPayment = true) {
+  return items.map(d => `
+    <tr>
+      <td><strong>${esc(d.expenseType)}</strong></td>
+      <td>${formatCurrency(d.amount)}</td>
+      <td>${formatDate(d.expenseDate)}</td>
+      ${showPayment ? `<td>${esc(d.paymentMethod)}</td>` : ''}
+      <td>${(Number(d.amount) || 0) >= threshold ? '<span class="tag tag-warning">大额</span>' : '-'}</td>
+      <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.purpose)}</td>
+      <td class="actions">
+        <button class="btn btn-outline btn-sm" data-edit="${d.id}">编辑</button>
+        <button class="btn btn-outline btn-sm" data-delete="${d.id}" style="color:var(--danger)">删除</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function bindRowActions(tbody) {
+  tbody.querySelectorAll('[data-edit]').forEach(btn => {
+    btn.addEventListener('click', () => showPropertyForm(btn.dataset.edit));
+  });
+  tbody.querySelectorAll('[data-delete]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (confirm('确定要删除这条记录吗？')) {
+        saveData(getData().filter(d => d.id !== btn.dataset.delete));
+        showToast('已删除');
+        renderPropertyContent();
+      }
+    });
+  });
 }
 
 function renderPropertyCharts(data) {
@@ -279,7 +377,7 @@ function showPropertyForm(editId) {
       <input type="hidden" name="id" value="${item ? item.id : ''}">
       <div class="form-row">
         <div class="form-group"><label>支出项目</label>
-          <select name="expenseType" class="form-select">${EXPENSE_TYPES.map(t => `<option value="${t}" ${item && item.expenseType === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
+          <select name="expenseType" class="form-select">${[...new Set([...EXPENSE_TYPES, item ? item.expenseType : null].filter(Boolean))].map(t => `<option value="${t}" ${item && item.expenseType === t ? 'selected' : ''}>${t}</option>`).join('')}</select>
         </div>
         <div class="form-group"><label>金额 <span class="hint">*</span></label>
           <input name="amount" type="number" step="0.01" class="form-input" value="${item ? item.amount : ''}" required>

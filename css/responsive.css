@@ -10,7 +10,7 @@
     box-shadow: 4px 0 20px rgba(0,0,0,0.1);
   }
   #sidebar-toggle { display: block; }
-  #app-content { padding: 16px; padding-bottom: calc(var(--mobile-nav-height) + 24px); }
+  #app-content { padding: 16px; padding-bottom: calc(var(--mobile-nav-height) + 24px); margin-left: 0; }
   #mobile-nav {
     display: flex;
     position: fixed;

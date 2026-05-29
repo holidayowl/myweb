@@ -69,6 +69,7 @@ export function importAll(json) {
   for (const [k, v] of Object.entries(json.data)) {
     set(k, v);
   }
+  migrateData();
 }
 
 export function clearAll() {
@@ -92,6 +93,86 @@ export function getUsageMB() {
 
 export function isStorageLow() {
   return getUsage() > 4 * 1024 * 1024;
+}
+
+const DATA_KEYS = ['contracts', 'energy', 'property', 'equipment', 'others'];
+
+// 物业费分类规则（永久生效，按优先级匹配）：
+// 1. 保安/保洁/礼仪/接待 → 物业费
+// 2. 安全/消防 → 安全费
+// 3. 采购/购买/耗材 → 物资采购
+// 4. 日期范围(XX年X月-XX年X月) 或 维护/保养/维保/调试/清运/化粪池/垃圾/清洗/水箱/水质/绿化/养护/虫控/消杀 → 维保费
+// 5. 维修/修理/更换/大修/工程/施工/改造/安装/检验 → 维修费
+// 6. 其余 → 其他
+const DATE_RANGE_RE = /\d{4}[.\s]*年\s*\d{1,2}[.\s]*月\s*[-—~至到]\s*\d{4}[.\s]*年\s*\d{1,2}[.\s]*月/;
+const CATEGORY_REMAP = {
+  '物业费（保安保洁礼仪接待）': '物业费',
+  '房屋和设备维修费': '维修费',
+  '环境和设备维保费': '维保费',
+};
+
+function classifyPropertyExpense(item) {
+  const text = (item.purpose || '') + (item.notes || '');
+  if (/保安|保洁|礼仪|接待/.test(text)) return '物业费';
+  if (/安全|消防/.test(text)) return '安全费';
+  if (/采购|购买|耗材/.test(text)) return '物资采购';
+  if (DATE_RANGE_RE.test(text)) return '维保费';
+  if (/维护|保养|维保|调试|清运|化粪池|垃圾|清洗|水箱|水质|绿化|养护|虫控|消杀/.test(text)) return '维保费';
+  if (/维修|修理|更换|大修|工程|施工|改造|安装|检验/.test(text)) return '维修费';
+  return '其他';
+}
+
+export function migrateData() {
+  for (const dk of DATA_KEYS) {
+    const val = get(dk);
+    if (!val || !Array.isArray(val)) continue;
+    let changed = false;
+    for (const item of val) {
+      if (!item.expenseType) continue;
+      // 旧分类名映射
+      if (CATEGORY_REMAP[item.expenseType]) {
+        item.expenseType = CATEGORY_REMAP[item.expenseType];
+        changed = true;
+      }
+      // 按用途内容重新归类
+      if (item.purpose) {
+        const newType = classifyPropertyExpense(item);
+        if (item.expenseType !== newType) {
+          item.expenseType = newType;
+          changed = true;
+        }
+      }
+    }
+    if (changed) set(dk, val);
+  }
+}
+
+export async function autoLoadData() {
+  const needsImport = DATA_KEYS.some(k => {
+    const val = get(k);
+    return val === null || (Array.isArray(val) && val.length === 0);
+  });
+
+  if (needsImport) {
+    try {
+      const resp = await fetch('data/import-data.json');
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json && json.data) {
+          for (const k of DATA_KEYS) {
+            if (json.data[k] !== undefined) {
+              set(k, json.data[k]);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // 加载失败时由 initAllKeys 设置空默认值
+    }
+  }
+
+  migrateData();
+  initAllKeys();
 }
 
 export function initAllKeys() {

@@ -55,6 +55,15 @@ function getRemainingLabel(contract) {
   return `<span class="tag tag-success">剩余${days}天</span>`;
 }
 
+function updateSortArrows() {
+  document.querySelectorAll('.sortable').forEach(el => {
+    const field = el.dataset.sort;
+    const arrow = sortField === field ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ' ⇅';
+    // Remove existing arrow suffix and append new one
+    el.textContent = el.textContent.replace(/[▲▼⇅]\s*$/, '').trimEnd() + arrow;
+  });
+}
+
 export function renderContractList() {
   const contracts = getContracts();
   const now = today();
@@ -152,9 +161,8 @@ export function setupContractEvents() {
       const field = th.dataset.sort;
       if (sortField === field) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
       else { sortField = field; sortDir = 'asc'; }
+      updateSortArrows();
       renderTable();
-      renderContractList(); // re-render HTML for updated sort arrows
-      setupContractEvents(); // re-bind events
     });
   });
 
